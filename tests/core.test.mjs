@@ -219,3 +219,97 @@ test('game summary counts tags from mistakes', () => {
   assert.equal(s.top[0].count, 2);
   assert.equal(s.counts.best, 1);
 });
+
+// ---------------------------------------------------------------- analysis, lessons, library
+import { parseGame, buildRecords, keyMoments, sideSummary, evaluateMove } from '../js/analysis.js';
+import { LESSONS as CURRICULUM, lessonsForTags } from '../js/lessons.js';
+import { resolveRef, BOOKS, LINKS } from '../js/library.js';
+import { exerciseFen } from '../js/exercise.js';
+import { explainOpponentMove } from '../js/coach.js';
+
+test('parseGame reads chess.com style PGN with clock comments and plain move lists', () => {
+  const pgn = `[Event "Live Chess"]
+[White "me"]
+[Black "you"]
+[Result "1-0"]
+
+1. e4 {[%clk 0:09:58]} 1... e5 {[%clk 0:09:57]} 2. Bc4 Nc6 3. Qh5 Nf6?? 4. Qxf7# 1-0`;
+  const g = parseGame(pgn);
+  assert.equal(g.moves.length, 7);
+  assert.equal(g.headers.White, 'me');
+  assert.equal(parseGame('1. d4 d5 2. c4').moves.length, 3);
+  assert.throws(() => parseGame('1. e4 Qxz9'), /Couldn/);
+});
+
+test('buildRecords grades both sides and keyMoments finds the blunder', () => {
+  const { moves } = parseGame('1. e4 e5 2. Bc4 Nc6 3. Qh5 Nf6 4. Qxf7#');
+  const fake = (best, score) => ({ lines: [{ uci: best, pv: [best], score }] });
+  const analyses = [
+    fake('e2e4', { cp: 30 }),
+    fake('e7e5', { cp: -30 }),
+    fake('g1f3', { cp: 30 }),
+    fake('g8f6', { cp: -20 }),
+    fake('d1h5', { cp: 0 }),
+    fake('g7g6', { cp: -10 }), // Black should play g6; Nf6 allows mate
+    fake('h5f7', { mate: 1 }),
+    { lines: [] },
+  ];
+  const recs = buildRecords(moves, analyses, 1);
+  assert.equal(recs.length, 7);
+  assert.equal(recs[5].cls, 'blunder');
+  assert.match(recs[5].headline, /checkmate in one/);
+  const km = keyMoments(recs, 'b');
+  assert.equal(km[0].ply, 5);
+  assert.equal(km[0].kind, 'your-mistake');
+  const s = sideSummary(recs, 'w');
+  assert.ok(s.acc > 80);
+});
+
+test('every lesson exercise has a legal start position and the library refs resolve', () => {
+  for (const l of CURRICULUM) {
+    assert.ok(l.exercises.length > 0, l.id);
+    for (const ex of l.exercises) {
+      const fen = exerciseFen(ex);
+      assert.doesNotThrow(() => new Chess(fen), ex.id);
+      if ((ex.kind || 'find') === 'find') assert.ok(ex.line.length > 0, ex.id);
+    }
+    for (const ref of l.further || []) assert.ok(resolveRef(ref), `${l.id} -> ${ref}`);
+  }
+  for (const link of LINKS) assert.match(link.url, /^https:\/\//);
+  assert.ok(BOOKS.length >= 15);
+});
+
+test('lessons are recommended from the mistakes you make', () => {
+  const recs = lessonsForTags({ 'allowed-fork': 3, 'opening-principles': 1 });
+  assert.equal(recs[0].id, 'forks');
+  assert.ok(recs.some((l) => l.id === 'opening'));
+});
+
+test('opponent moves are explained', () => {
+  const c = new Chess();
+  c.move('e4');
+  c.move('e5');
+  c.move('Nf3');
+  c.move('Nc6');
+  c.move('Bc4');
+  const m = c.move('Nf6');
+  const ex = explainOpponentMove(m);
+  assert.equal(ex.text, 'Nf6 attacks your pawn on e4.');
+  assert.equal(ex.threat, true);
+});
+
+test('evaluateMove marks the engine move as best', () => {
+  const c = new Chess();
+  const m = c.move('e4');
+  const ev = evaluateMove(m, { lines: [{ uci: 'e2e4', pv: ['e2e4'], score: { cp: 30 } }] }, { lines: [{ uci: 'e7e5', pv: [], score: { cp: -30 } }] });
+  assert.equal(ev.cls, 'best');
+  assert.equal(ev.loss, 0);
+});
+
+import { toThirdPerson } from '../js/analysis.js';
+test('opponent move explanations are rewritten in the third person for review', () => {
+  assert.equal(toThirdPerson('Your knight on d5 isn’t safe there. Nothing protects it, so your opponent can simply take it with exd5.'),
+    'Their knight on d5 isn’t safe there. Nothing protects it, so you can simply take it with exd5.');
+  assert.equal(toThirdPerson('Your opponent is slightly better.'), 'You are slightly better.');
+  assert.equal(toThirdPerson('You missed a free rook!'), 'They missed a free rook!');
+});

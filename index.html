@@ -2,9 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Chess Coach</title>
-  <meta name="description" content="A live chess coach for beginners: adaptive opponent, move-by-move feedback and a rating estimate after every move.">
+  <meta name="claude:viewport-fit-sides" content="cover">
+  <meta name="description" content="A live chess coach for beginners: adaptive opponent, move-by-move feedback, game review, lessons and a rating estimate after every move.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Chess Coach">
+  <meta name="theme-color" content="#2e6a4e">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
@@ -16,93 +20,182 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="logo" aria-hidden="true">♞</span> Chess Coach</div>
-    <nav class="top-actions">
-      <button id="btn-new" class="btn primary" type="button">New game</button>
-      <button id="btn-progress" class="btn" type="button">Progress</button>
-      <button id="btn-settings" class="btn" type="button" aria-label="Settings">Settings</button>
+    <nav class="tabs" aria-label="Sections">
+      <button class="tab" type="button" data-view="play">Play</button>
+      <button class="tab" type="button" data-view="review">Review</button>
+      <button class="tab" type="button" data-view="learn">Learn</button>
+      <button class="tab" type="button" data-view="progress">Progress</button>
     </nav>
+    <button id="btn-settings" class="btn" type="button">Settings</button>
   </header>
 
-  <main class="layout">
-    <section class="play" aria-label="Board">
-      <div class="player-tag">
-        <span class="avatar bot" aria-hidden="true">♜</span>
-        <span class="who">Coach Bot</span>
-        <span id="opp-elo" class="pill" title="The bot's current playing strength">—</span>
-      </div>
-
-      <div class="board-row">
-        <div id="evalbar" class="evalbar" title="Engine evaluation. + means White is better; +1.0 is about one pawn.">
-          <div class="fill"></div>
-          <span class="label"></span>
+  <main>
+    <!-- ============================== PLAY ============================== -->
+    <section id="view-play" class="view layout" aria-label="Play">
+      <section class="play">
+        <div class="player-tag">
+          <span class="avatar bot" aria-hidden="true">♜</span>
+          <span class="who">Coach Bot</span>
+          <span id="opp-elo" class="pill" title="The bot's current playing strength">—</span>
         </div>
-        <div class="board-box">
-          <div id="board"></div>
-          <div id="loading" class="overlay"><div class="spinner" aria-hidden="true"></div><span id="loading-text">Loading the chess engine…</span></div>
+        <div class="board-row">
+          <div id="evalbar" class="evalbar" title="Engine evaluation. + means White is better; +1.0 is about one pawn.">
+            <div class="fill"></div><span class="label"></span>
+          </div>
+          <div class="board-box">
+            <div id="board"></div>
+            <div id="loading" class="overlay"><div class="spinner" aria-hidden="true"></div><span id="loading-text">Loading the chess engine…</span></div>
+          </div>
         </div>
-      </div>
+        <div class="player-tag">
+          <span class="avatar you" aria-hidden="true">♙</span>
+          <span class="who">You</span>
+          <span id="you-elo" class="pill" title="Your current rating estimate">—</span>
+        </div>
+        <div class="controls">
+          <button id="btn-hint" class="btn" type="button" title="Hints get more specific each time you press">Hint</button>
+          <button id="btn-undo" class="btn" type="button">↩ Take back</button>
+          <button id="btn-flip" class="btn" type="button">⇅ Flip</button>
+          <button id="btn-resign" class="btn ghost-danger" type="button">Resign</button>
+          <button id="btn-new" class="btn primary" type="button">New game</button>
+        </div>
+        <div id="status" class="status" role="status">Loading…</div>
+      </section>
 
-      <div class="player-tag">
-        <span class="avatar you" aria-hidden="true">♙</span>
-        <span class="who">You</span>
-        <span id="you-elo" class="pill" title="Your current rating estimate">—</span>
-      </div>
+      <aside class="side">
+        <section class="card rating-card" aria-label="Rating">
+          <div class="rating-head">
+            <span class="eyebrow" id="rating-label">You're playing at</span>
+            <span id="rating-delta" class="delta"></span>
+          </div>
+          <div class="rating-main">
+            <span id="rating-now" class="big">—</span>
+            <span id="rating-range" class="muted"></span>
+          </div>
+          <svg id="spark" class="spark" viewBox="0 0 300 52" preserveAspectRatio="none" aria-hidden="true"></svg>
+          <div class="rating-foot">
+            <span id="rating-overall"></span>
+            <span id="coach-mode" class="mode"></span>
+          </div>
+        </section>
 
-      <div class="controls">
-        <button id="btn-hint" class="btn" type="button" title="Hints get more specific each time you press">Hint</button>
-        <button id="btn-undo" class="btn" type="button">↩ Take back</button>
-        <button id="btn-flip" class="btn" type="button">⇅ Flip board</button>
-        <button id="btn-resign" class="btn ghost-danger" type="button">Resign</button>
-      </div>
-      <div id="status" class="status" role="status">Loading…</div>
+        <section class="card coach-card" aria-label="Coach">
+          <div class="card-head">
+            <h2>Coach</h2>
+            <span id="opening" class="opening"></span>
+          </div>
+          <div id="feed" class="feed" aria-live="polite"></div>
+        </section>
+
+        <details class="card checklist-card" id="checklist-card">
+          <summary><h2>Before every move</h2></summary>
+          <ol id="checklist" class="checklist"></ol>
+        </details>
+
+        <section class="card moves-card" aria-label="Moves">
+          <div class="card-head">
+            <h2>Moves</h2>
+            <span class="muted small">Tap a move to look back</span>
+          </div>
+          <div id="review" class="review" hidden>
+            <div class="review-top">
+              <span>Looking at <b id="review-label"></b></span>
+              <span class="review-nav">
+                <button id="btn-prev" class="btn small" type="button" aria-label="Previous move">◀</button>
+                <button id="btn-next" class="btn small" type="button" aria-label="Next move">▶</button>
+                <button id="btn-live" class="btn small primary" type="button">Back to game</button>
+              </span>
+            </div>
+            <div id="review-note" class="review-note"></div>
+          </div>
+          <ol id="movelist" class="movelist"></ol>
+        </section>
+      </aside>
     </section>
 
-    <aside class="side">
-      <section class="card rating-card" aria-label="Rating">
-        <div class="rating-head">
-          <span class="eyebrow" id="rating-label">You're playing at</span>
-          <span id="rating-delta" class="delta"></span>
-        </div>
-        <div class="rating-main">
-          <span id="rating-now" class="big">—</span>
-          <span id="rating-range" class="muted"></span>
-        </div>
-        <svg id="spark" class="spark" viewBox="0 0 300 52" preserveAspectRatio="none" aria-hidden="true"></svg>
-        <div class="rating-foot">
-          <span id="rating-overall"></span>
-          <span id="coach-mode" class="mode"></span>
-        </div>
-      </section>
-
-      <section class="card coach-card" aria-label="Coach">
-        <div class="card-head">
-          <h2>Coach</h2>
-          <span id="opening" class="opening"></span>
-        </div>
-        <div id="feed" class="feed" aria-live="polite"></div>
-      </section>
-
-      <section class="card moves-card" aria-label="Moves">
-        <div class="card-head">
-          <h2>Moves</h2>
-          <span class="muted small">Tap a move to review it</span>
-        </div>
-        <div id="review" class="review" hidden>
-          <div class="review-top">
-            <span>Reviewing <b id="review-label"></b></span>
-            <span class="review-nav">
-              <button id="btn-prev" class="btn small" type="button" aria-label="Previous move">◀</button>
-              <button id="btn-next" class="btn small" type="button" aria-label="Next move">▶</button>
-              <button id="btn-live" class="btn small primary" type="button">Back to game</button>
-            </span>
+    <!-- ============================== REVIEW ============================== -->
+    <section id="view-review" class="view" aria-label="Game review" hidden>
+      <div id="rv-empty" class="empty-state" hidden>
+        <h1 class="page-title">Game review</h1>
+        <p class="muted">Finish a game against Coach Bot, or import one you played on chess.com or Lichess, and the coach will go through every move with you.</p>
+        <button id="rv-import-empty" class="btn primary" type="button">Import a game</button>
+      </div>
+      <div id="rv-main" class="layout">
+        <section class="play">
+          <div class="board-row">
+            <div id="rv-evalbar" class="evalbar"><div class="fill"></div><span class="label"></span></div>
+            <div class="board-box"><div id="rv-board"></div></div>
           </div>
-          <div id="review-note" class="review-note"></div>
+          <div class="controls nav-controls">
+            <button id="rv-first" class="btn" type="button" aria-label="First move">⏮</button>
+            <button id="rv-prev" class="btn" type="button" aria-label="Previous move">◀</button>
+            <button id="rv-next" class="btn" type="button" aria-label="Next move">▶</button>
+            <button id="rv-last" class="btn" type="button" aria-label="Last move">⏭</button>
+            <button id="rv-flip" class="btn" type="button" aria-label="Flip board">⇅</button>
+          </div>
+          <div class="controls">
+            <button id="rv-best" class="btn" type="button">Show best move</button>
+            <button id="rv-line" class="btn" type="button">Play best line</button>
+            <button id="rv-practice" class="btn primary" type="button">Try it yourself</button>
+          </div>
+          <div id="rv-status" class="status" role="status"></div>
+        </section>
+        <aside class="side">
+          <section class="card">
+            <div class="card-head">
+              <h2>Game review</h2>
+              <button id="rv-import" class="btn small" type="button">Import a game</button>
+            </div>
+            <label class="visually-hidden" for="rv-game">Choose a game</label>
+            <select id="rv-game" class="game-select"></select>
+            <div id="rv-summary"></div>
+          </section>
+          <section class="card">
+            <div class="card-head"><h2>How the game went</h2><span class="muted small">Tap to jump</span></div>
+            <svg id="rv-graph" class="graph" viewBox="0 0 600 120" preserveAspectRatio="none" role="img" aria-label="Evaluation over the game"></svg>
+            <div class="graph-legend muted small"><span>White ahead ↑</span><span>Black ahead ↓</span></div>
+            <h3 class="small-head">Key moments</h3>
+            <div id="rv-moments" class="moments"></div>
+          </section>
+          <section class="card comment-card" id="rv-comment" aria-live="polite"></section>
+          <section class="card">
+            <div class="card-head"><h2>Moves</h2></div>
+            <ol id="rv-moves" class="movelist"></ol>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============================== LEARN ============================== -->
+    <section id="view-learn" class="view page" aria-label="Learn" hidden>
+      <div id="learn-home"></div>
+      <div id="learn-lesson" hidden>
+        <button id="lesson-back" class="btn small" type="button">← All lessons</button>
+        <div class="lesson-layout">
+          <article id="lesson-body" class="lesson-text"></article>
+          <section class="card exercise" aria-label="Exercise">
+            <div class="card-head"><h2 id="ex-count">Exercise</h2><div id="ex-dots" class="ex-dots"></div></div>
+            <p id="ex-prompt" class="ex-prompt"></p>
+            <div class="board-box ex-board-box"><div id="ex-board"></div></div>
+            <p id="ex-feedback" class="ex-feedback" role="status"></p>
+            <div class="controls">
+              <button id="ex-hint" class="btn" type="button">Hint</button>
+              <button id="ex-retry" class="btn" type="button">Reset</button>
+              <button id="ex-flip" class="btn" type="button" aria-label="Flip board">⇅</button>
+              <button id="ex-next" class="btn primary" type="button" hidden>Next exercise →</button>
+            </div>
+          </section>
         </div>
-        <ol id="movelist" class="movelist"></ol>
-      </section>
-    </aside>
+      </div>
+    </section>
+
+    <!-- ============================== PROGRESS ============================== -->
+    <section id="view-progress" class="view page" aria-label="Progress" hidden>
+      <div id="progress-body"></div>
+    </section>
   </main>
 
+  <!-- ============================== DIALOGS ============================== -->
   <dialog id="dlg-promo" class="dialog small-dialog">
     <h3>Promote your pawn to…</h3>
     <div class="promo-choices">
@@ -127,8 +220,25 @@
   <dialog id="dlg-over" class="dialog">
     <div id="over-body"></div>
     <div class="dialog-actions">
-      <button id="btn-over-review" class="btn" type="button">Review moves</button>
+      <button id="btn-over-review" class="btn" type="button">Review this game</button>
       <button id="btn-over-new" class="btn primary" type="button">New game</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlg-import" class="dialog">
+    <h2>Import a game</h2>
+    <p class="muted">Paste a game from chess.com (Share → PGN) or Lichess (Share &amp; export → PGN). The coach analyses every move and adds it to your review list. Imported games count toward your rating.</p>
+    <label class="visually-hidden" for="import-pgn">Game (PGN)</label>
+    <textarea id="import-pgn" rows="7" placeholder='[White "You"]&#10;[Black "Friend"]&#10;1. e4 e5 2. Nf3 Nc6 3. Bc4 …'></textarea>
+    <fieldset id="import-sides" class="import-sides"></fieldset>
+    <p id="import-error" class="error-text" role="alert"></p>
+    <div id="import-progress" class="progress" hidden>
+      <div class="progress-track"><div id="import-bar" class="progress-bar"></div></div>
+      <span id="import-pct" class="muted small">Analysing…</span>
+    </div>
+    <div class="dialog-actions">
+      <button id="import-cancel" class="btn" type="button">Cancel</button>
+      <button id="import-go" class="btn primary" type="button">Analyse game</button>
     </div>
   </dialog>
 
@@ -160,10 +270,11 @@
         </div>
       </fieldset>
       <fieldset>
-        <legend>Coach warnings before your move</legend>
-        <label><input type="radio" name="warnings" value="auto"> Automatic — fewer as you improve</label>
+        <legend>Coach</legend>
+        <label><input type="radio" name="warnings" value="auto"> Warnings before your move: automatic (fewer as you improve)</label>
         <label><input type="radio" name="warnings" value="always"> Always warn me</label>
         <label><input type="radio" name="warnings" value="off"> Off — let me find things myself</label>
+        <label><input type="checkbox" name="explainOpponent"> Explain my opponent’s moves</label>
         <p class="hint-text">Moves played right after a specific warning, a hint (level 2+) or a takeback are marked “assisted” and don't count toward your rating.</p>
       </fieldset>
       <fieldset>
@@ -178,13 +289,6 @@
         </span>
       </div>
     </form>
-  </dialog>
-
-  <dialog id="dlg-progress" class="dialog wide">
-    <div id="progress-body"></div>
-    <div class="dialog-actions">
-      <button class="btn primary" type="button" data-close>Close</button>
-    </div>
   </dialog>
 
   <script type="module" src="js/main.js"></script>

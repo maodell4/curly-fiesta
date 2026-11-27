@@ -1,8 +1,15 @@
 # Chess Coach
 
-A browser chess coach for complete beginners. You play against an opponent that adapts to you. A coach talks you through the game move by move, and you get a rating estimate that updates after every move you make.
+A browser chess coach for complete beginners. You play against an opponent that adapts to you. A coach talks you through the game move by move, and you get a rating estimate that updates after every move you make. Afterwards, the coach reviews your games with you, and a lesson library takes you from beginner to advanced.
 
-Everything runs locally in your browser, including the Stockfish engine. There is no account, no server and no tracking. Your progress is saved in your browser's local storage.
+The app has four sections:
+
+- **Play** — a game against Coach Bot, with live coaching and your rating after every move.
+- **Review** — every move of your games graded and explained, plus games you import from chess.com or Lichess.
+- **Learn** — 14 lessons from beginner to advanced with 30 interactive exercises checked by Stockfish, practice positions built from your own mistakes, and a reading list.
+- **Progress** — your rating history, what to work on, and your recent games.
+
+Everything runs in your browser, including the Stockfish engine. Your progress is saved in the browser. When the app runs as a claude.ai artifact (for example from the Claude iPhone app) and you're signed in, it is also saved privately to your Claude account, so it follows you between devices.
 
 ## Running it
 
@@ -13,6 +20,8 @@ python3 -m http.server 8000     # or: npm start
 ```
 
 Then open <http://localhost:8000>. Any static web host (GitHub Pages, Netlify, etc.) works too; no build step is needed.
+
+**On iPhone/iPad:** open the published artifact link from the Claude app, or host the folder anywhere and open it in Safari. Moves work by tapping a piece and then its square, or by dragging. Safari's *Share → Add to Home Screen* gives it an app icon. On slower phones the engine automatically searches a little less deeply so it stays responsive.
 
 ## What the coach does
 
@@ -28,10 +37,49 @@ Then open <http://localhost:8000>. Any static web host (GitHub Pages, Netlify, e
 - It shows the better move with arrows on the board, plus a short lesson.
 - After a mistake it offers a takeback, so you can find the right move yourself.
 
+**What your opponent is doing.** After each of Coach Bot's moves, the coach says what it does (develops a piece, takes something, gives check). It doesn't spell out threats, because finding those is your job; for beginners the pre-move warnings cover them. You can turn this off in Settings.
+
 **After the game**
 - You get a summary with your level for the game, your accuracy, a count of each move grade, and the one thing to work on next.
-- **Progress** shows your rating history, your recurring weaknesses and recent games.
-- Tap any move in the move list (or use ← →) to review it with the coach's comment.
+- **Review this game** opens the full review (below).
+
+## Game review
+
+- An **eval graph** shows who was ahead through the game, with dots for mistakes (big dots are yours). Tap it to jump to that moment.
+- **Key moments** jumps straight to your mistakes, your opponent's mistakes and great moves.
+- **Every move of both sides** gets a grade and an explanation; your opponent's moves are described from their side.
+- **Show best move** draws the better move (green) next to what was played (red). **Play best line** animates the engine's line.
+- **Try it yourself** puts you back in the position before your mistake to find a better move. The engine checks your answer.
+- **Import a game:** paste a PGN from chess.com (*Share → PGN*) or Lichess (*Share & export*). The coach analyses every move. Imported games count toward your rating, since they're real games you played.
+
+## Learn
+
+The curriculum follows what coaches' study plans by rating agree on:
+
+| Level | Lessons |
+| --- | --- |
+| Beginner (about 0–1000) | Is it safe? counting attackers and defenders · thinking routine: checks, captures, threats · opening principles · basic checkmates · forks · pins and skewers |
+| Intermediate (about 1000–1600) | Discovered attacks · removing the defender · pawn endgames (rule of the square, opposition) · mating with rooks · mating patterns |
+| Advanced (about 1600+) | Rook endgames (Lucena, Philidor) · strategy when there's no tactic · calculation |
+
+- Each lesson has a short explanation, then exercises on a board. There are three kinds: find the best move, play a short line, or play the position out against Stockfish. Examples: mate with king and queen, win the Lucena, hold the Philidor.
+- Any good move is accepted, not only the "book" answer, because the engine checks alternatives. Wrong moves get an explanation of what goes wrong.
+- `npm run verify-lessons` checks every exercise position and solution with Stockfish.
+- **Recommended for you** picks lessons from the mistakes the coach tagged in your recent games.
+- **Practice your mistakes** turns positions where you went wrong in your own games into puzzles.
+- **Before every move** is a four-step checklist based on Dan Heisman's advice against "hope chess".
+- The **Library** has books by level and free websites and videos.
+
+### Sources used for the curriculum and library
+
+- Coaches' study plans by rating: [Chess.com study plan directory](https://www.chess.com/article/study-plan-directory), [The Complete Chess Improvement Roadmap: 0 to 2000](https://www.chess.com/blog/Michel2426/the-complete-chess-improvement-roadmap-from-0-to-2000-rating), [How to make progress based on your rating](https://www.chess.com/blog/WGMTijana/how-to-make-progress-based-on-your-rating)
+- The Steps Method: [Han Schut on Lichess](https://lichess.org/@/HanSchut/blog/the-steps-method-for-learning-and-teaching-chess/L74I4Ihq), [New in Chess](https://newinchess.com/the-complete-step-by-step-method)
+- Yusupov's course levels: [book review](https://www.chess.com/blog/beccrajoy/book-review-yusupovs-build-up-your-chess-the-fundamentals)
+- Thinking process: [Dan Heisman, Passive vs Basic Hope Chess](https://www.chess.com/article/view/passive-vs-basic-hope-chess)
+- Tactics: [Chess Tactics: 38 Definitions and Examples](https://www.chess.com/article/view/chess-tactics)
+- Endgames: [The Two Rook Endings You Must Know](https://www.chess.com/article/view/the-two-rook-endings-you-must-know), [The complete U2000 guide to theoretical endgames](https://lichess.org/@/elementalmaster1/blog/the-complete-u2000-guide-to-theoretical-endgames/Hlht1BY0)
+- Book recommendations: [Good Chess Books for Beginners and Beyond](https://www.chess.com/blog/RussBell/good-chess-books-for-beginners-and-beyond), [Chess Books – From Beginner to Expert](https://www.chess.com/blog/joeldick/chess-books-from-beginner-to-expert)
+- Videos: [Top YouTube Chess Channels for Beginners](https://www.chess.com/blog/FRANKEE459/top-youtube-chess-channels-for-beginners)
 
 ## Adapting to you
 
@@ -80,18 +128,25 @@ Move grades use win-probability drops (Lichess's eval → win% curve), so a pawn
 ## Project layout
 
 ```
-index.html            page
-css/app.css           styles (light + dark)
-js/main.js            game loop, UI, review mode, dialogs
-js/engine.js          Stockfish worker wrapper (UCI, MultiPV, caching)
-js/coach.js           explanations, pre-move tips, hints, game summary
-js/tactics.js         board reading: hanging pieces (static exchange), forks, mate threats
-js/rating.js          centipawn loss → rating estimate, move grades, accuracy, coach modes
-js/bot.js             adaptive opponent
-js/openings.js        small opening book with beginner-friendly ideas
-js/storage.js         progress saved in localStorage
-vendor/               chess.js, chessground (board UI), Stockfish 19 lite (WASM) + Stockfish 10 (asm.js fallback)
-tests/core.test.mjs   unit tests: npm test
+index.html               page (Play, Review, Learn, Progress)
+css/app.css              styles (light + dark, phone layouts, iOS safe areas)
+js/main.js               game loop, navigation, Progress page, dialogs
+js/review.js             game review and PGN import
+js/learn.js              lessons, exercise runner, mistakes practice, library
+js/lessons.js            the curriculum (lesson text + exercises)
+js/library.js            books, websites, videos, move checklist
+js/analysis.js           move grading and whole-game analysis
+js/engine.js             Stockfish worker wrapper (UCI, MultiPV, caching, adaptive depth)
+js/coach.js              explanations, pre-move tips, hints, opponent-move notes, tips library
+js/tactics.js            board reading: hanging pieces (static exchange), forks, mate threats
+js/rating.js             centipawn loss → rating estimate, move grades, accuracy, coach modes
+js/bot.js                adaptive opponent
+js/openings.js           small opening book with beginner-friendly ideas
+js/storage.js            progress in the browser, plus your Claude account when available
+js/board.js, exercise.js shared helpers
+vendor/                  chess.js, chessground (board UI), Stockfish 19 lite (WASM) + Stockfish 10 (asm.js fallback)
+tests/core.test.mjs      unit tests: npm test
+tests/verify-lessons.mjs checks every lesson exercise with Stockfish: npm run verify-lessons
 ```
 
 ## Tests
@@ -100,7 +155,15 @@ tests/core.test.mjs   unit tests: npm test
 npm test
 ```
 
-The tests cover the rating model, move grading, tactic detection (hanging pieces, forks, mate threats), the coach's explanations, hints and the bot's behaviour. They need Node 18+ and no `npm install`.
+The tests cover:
+
+- the rating model and move grading
+- tactic detection (hanging pieces, forks, mate threats)
+- the coach's explanations, hints and opponent-move notes
+- PGN parsing and whole-game review
+- the curriculum data and the bot's behaviour
+
+They need Node 18+ and no `npm install`. `npm run verify-lessons` runs Stockfish (the vendored build, under Node) over every exercise; it takes a few minutes.
 
 ## Third-party code
 

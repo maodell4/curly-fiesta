@@ -1,5 +1,5 @@
 import { Chess } from '../vendor/chess.js';
-import { Chessground } from '../vendor/chessground/chessground.min.js';
+import { makeBoard, refresh } from './board.js';
 import { Engine } from './engine.js';
 import * as R from './rating.js';
 import * as T from './tactics.js';
@@ -7,6 +7,11 @@ import * as Coach from './coach.js';
 import { chooseBotMove } from './bot.js';
 import { detectOpening } from './openings.js';
 import * as Store from './storage.js';
+import { evaluateMove as gradeMove, analysePositions } from './analysis.js';
+import { initReview, open as openReview, onShow as reviewShown, onHide as reviewHidden, buildGameRecord } from './review.js';
+import { initLearn, onShow as learnShown, onHide as learnHidden, openLesson, openMistakes, showHome as learnHome } from './learn.js';
+import { LESSONS, lessonsForTags } from './lessons.js';
+import { CHECKLIST } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,19 +52,27 @@ const S = {
 // ---------------------------------------------------------------- setup
 
 async function init() {
-  cg = Chessground($('board'), {
-    fen: S.chess.fen(),
-    orientation: 'white',
-    coordinates: true,
-    autoCastle: true,
-    animation: { enabled: true, duration: 220 },
-    highlight: { lastMove: true, check: true },
-    movable: { free: false, color: undefined, showDests: true, events: { after: onUserMove } },
-    premovable: { enabled: false },
-    draggable: { enabled: true, showGhost: true },
-    drawable: { enabled: true, visible: true, eraseOnClick: true },
-  });
+  S.overall = R.overallFromGames(S.profile.games);
+  S.gameEst = R.estimate(R.emptyStats(), S.overall.mean);
+  S.tier = R.tierFor(S.overall.mean);
+  cg = makeBoard($('board'), { fen: S.chess.fen(), orientation: 'white', movable: { events: { after: onUserMove } } });
   bindUI();
+  initReview({
+    engine,
+    getTier: () => S.tier,
+    getOverall: () => S.overall.mean,
+    openLesson: (id) => openLesson(id),
+    lessonForTag: (tag) => lessonsForTags({ [tag]: 1 })[0] || null,
+    onGameArchived: addImportedGame,
+  });
+  initLearn({ engine, getTier: () => S.tier, getOverall: () => S.overall.mean, showView, onProgress: () => {} });
+  $('checklist').innerHTML = CHECKLIST.map((c) => `<li>${esc(c)}</li>`).join('');
+  $('checklist-card').open = S.profile.games.length < 5;
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
+  window.addEventListener('hashchange', () => showView(hashView()));
+  showView(hashView());
+  Store.onChange(onStoreChange);
+  Store.connectCloud();
   S.overall = R.overallFromGames(S.profile.games);
   S.gameEst = R.estimate(R.emptyStats(), S.overall.mean);
   S.tier = R.tierFor(S.overall.mean);
@@ -123,7 +136,6 @@ function bindUI() {
     if (await askConfirm('Resign this game?', 'It will count as a loss. Your moves so far still count toward your rating.', 'Resign')) endGame('resign');
   });
   $('btn-settings').addEventListener('click', openSettings);
-  $('btn-progress').addEventListener('click', openProgress);
   $('btn-live').addEventListener('click', () => setView(null));
   $('btn-prev').addEventListener('click', () => stepView(-1));
   $('btn-next').addEventListener('click', () => stepView(1));
@@ -131,14 +143,15 @@ function bindUI() {
     $('dlg-over').close();
     newGame();
   });
-  $('btn-over-review').addEventListener('click', () => {
+  $('btn-over-review').addEventListener('click', async () => {
     $('dlg-over').close();
-    const first = S.records.findIndex((r) => r.by === 'player');
-    if (first >= 0) setView(first);
+    const id = await S.archivePromise;
+    showView('review');
+    openReview(id || undefined);
   });
   document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, select, textarea, dialog[open]')) return;
+    if (e.target.closest('input, select, textarea, dialog[open]') || $('view-play').hidden) return;
     if (e.key === 'ArrowLeft') stepView(-1);
     else if (e.key === 'ArrowRight') stepView(1);
     else if (e.key === 'Escape' && S.viewPly != null) setView(null);
@@ -149,6 +162,7 @@ function bindUI() {
     if (!(await askConfirm('Reset all progress?', 'This erases your saved games and rating history in this browser.', 'Erase everything'))) return;
     S.profile = Store.reset();
     $('dlg-settings').close();
+    renderProgress();
     S.overall = R.overallFromGames([]);
     S.tier = R.tierFor(S.overall.mean);
     addMsg({ kind: 'info', title: 'Progress reset', body: 'Starting fresh.' });
@@ -294,7 +308,8 @@ async function handlePlayerMove(move) {
   if (a1) setEval(a1.lines[0]?.score, S.chess.turn());
   else if (S.chess.isCheckmate()) setEval({ mate: 0 }, S.chess.turn());
 
-  const ev = evaluateMove(move, a0, a1);
+  const prevOpp = S.records.length >= 2 ? S.records[S.records.length - 2].move : null;
+  const ev = gradeMove(move, a0, a1, prevOpp);
   Object.assign(rec, ev);
   const prev = S.gameEst;
   rec.assisted = assisted;
@@ -326,46 +341,6 @@ async function handlePlayerMove(move) {
   if (over) return endGame();
   if (offerTakebackFor(ev.cls)) return offerTakeback(rec);
   botTurn();
-}
-
-function evaluateMove(move, a0, a1) {
-  const legalCount = new Chess(move.before).moves().length;
-  const uci = T.moveToUci(move);
-  const best = a0.lines[0];
-  const post = new Chess(move.after);
-  if (!best) return { loss: 0, winDrop: 0, cls: 'forced', acc: 100, excluded: true, forced: true, afterCp: 0, level: null };
-  const line = a0.lines.find((l) => l.uci === uci);
-  let afterScore;
-  if (post.isCheckmate()) afterScore = { mate: 1 };
-  else if (post.isGameOver()) afterScore = { cp: 0 };
-  else if (line) afterScore = line.score;
-  else afterScore = R.negateScore(a1?.lines[0]?.score ?? { cp: 0 });
-
-  const isBest = uci === best.uci;
-  const bestCp = R.scoreToCp(best.score);
-  const afterCp = isBest ? bestCp : R.scoreToCp(afterScore);
-  const loss = isBest ? 0 : Math.max(0, bestCp - afterCp);
-  const winBefore = R.winFromScore(best.score);
-  const winAfter = isBest ? winBefore : R.winFromScore(afterScore);
-  const winDrop = Math.max(0, winBefore - winAfter);
-  const forced = legalCount === 1;
-  const decided = Math.abs(bestCp) >= 900 && Math.abs(afterCp) >= 900 && Math.sign(bestCp) === Math.sign(afterCp);
-
-  const prevOpp = S.records.length >= 2 ? S.records[S.records.length - 2].move : null;
-  const obviousRecapture = !!(prevOpp && prevOpp.captured && move.captured && prevOpp.to === move.to);
-  const second = a0.lines[1];
-  const onlyMove = isBest && !!second && winBefore - R.winFromScore(second.score) >= 20 && !obviousRecapture;
-  const cls = R.classify({ winDrop, isBest: isBest || (!!line && loss === 0), onlyMove, forced });
-  return {
-    loss,
-    winDrop,
-    cls,
-    acc: R.moveAccuracy(winBefore, winAfter),
-    excluded: forced || decided,
-    forced,
-    afterCp,
-    level: R.moveLevel(loss),
-  };
 }
 
 function ratePendingBot(aNext) {
@@ -410,7 +385,16 @@ async function botTurn() {
   updateOpening();
   renderMoves();
   if (S.chess.isGameOver()) return endGame();
+  explainBotMove(move);
   startPlayerTurn();
+}
+
+/** Says what the bot's move does. Threats are left to the pre-move warnings, so this never gives the answer away. */
+function explainBotMove(move) {
+  if (!S.profile.settings.explainOpponent) return;
+  const ex = Coach.explainOpponentMove(move);
+  if (!ex || (ex.threat && !move.san.includes('+'))) return;
+  addMsg({ kind: 'opp', kicker: 'Opponent', body: `Coach Bot played ${ex.san} — it ${ex.what}.` });
 }
 
 function pushRecord(move, by) {
@@ -535,7 +519,11 @@ function saveGame(result, score) {
   const summary = Coach.gameSummary(S.playerMoves);
   const before = S.overall;
   const botEst = R.estimate(S.botRated, S.botElo, 5);
+  const id = `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  S.archivePromise = archiveGame(id, result, score === null ? null : result);
   S.profile.games.push({
+    id,
+    source: 'play',
     date: new Date().toISOString(),
     result,
     score,
@@ -557,6 +545,120 @@ function saveGame(result, score) {
   Store.save(S.profile);
   S.overall = R.overallFromGames(S.profile.games);
   return { before, after: S.overall, summary, botEst: S.botRated.n >= 5 ? botEst : null };
+}
+
+/** Stores the full game (every move graded and explained) for the Review screen. */
+async function archiveGame(id, result) {
+  const moves = S.chess.history({ verbose: true });
+  if (!moves.length) return null;
+  const me = S.me;
+  const reason = S.result?.reason || (result === 'unfinished' ? 'Unfinished' : '');
+  const botElo = S.botElo;
+  const tier = S.tier;
+  const prior = S.overall.mean;
+  try {
+    const analyses = await analysePositions(moves, engine);
+    const record = buildGameRecord({
+      moves,
+      analyses,
+      userColor: me,
+      white: me === 'w' ? 'You' : `Coach Bot (${botElo})`,
+      black: me === 'b' ? 'You' : `Coach Bot (${botElo})`,
+      result: result === 'unfinished' ? '*' : result,
+      reason,
+      source: 'play',
+      tier,
+      priorElo: prior,
+      extra: { id, botElo },
+    });
+    Store.addGame(record);
+    return id;
+  } catch (e) {
+    console.warn('Could not archive game', e);
+    return null;
+  }
+}
+
+/** Adds an imported game to your rating history. */
+function addImportedGame(record) {
+  const tags = {};
+  for (const r of record.moves) {
+    if (r.color !== record.userColor || !['mistake', 'blunder'].includes(r.cls)) continue;
+    for (const t of r.tags || []) tags[t] = (tags[t] || 0) + 1;
+  }
+  const counts = {};
+  for (const r of record.moves) if (r.color === record.userColor) counts[r.cls] = (counts[r.cls] || 0) + 1;
+  S.profile.games.push({
+    id: record.id,
+    source: 'import',
+    date: record.date,
+    result: record.result,
+    score: record.userScore,
+    color: record.userColor,
+    n: record.n,
+    S: record.S,
+    Q: record.Q,
+    perf: record.perf,
+    acc: record.acc,
+    moves: record.moves.filter((r) => r.color === record.userColor).length,
+    botElo: null,
+    counts,
+    tags,
+    opening: record.opening,
+  });
+  Store.save(S.profile);
+  S.overall = R.overallFromGames(S.profile.games);
+  S.tier = R.tierFor(S.overall.mean, S.tier);
+  renderRating();
+}
+
+function onStoreChange() {
+  S.profile = Store.load();
+  S.overall = R.overallFromGames(S.profile.games);
+  if (!inProgress()) {
+    S.gameEst = R.estimate(S.rated, S.overall.mean);
+    S.tier = R.tierFor(S.overall.mean, S.tier);
+  }
+  applyDisplaySettings();
+  renderRating();
+  if (!$('view-progress').hidden) renderProgress();
+}
+
+// ---------------------------------------------------------------- navigation
+
+const VIEWS = ['play', 'review', 'learn', 'progress'];
+function hashView() {
+  const h = (location.hash || '').slice(1);
+  return VIEWS.includes(h) ? h : 'play';
+}
+
+function showView(name, keepSub = false) {
+  if (!VIEWS.includes(name)) name = 'play';
+  const already = !$(`view-${name}`).hidden;
+  for (const v of VIEWS) {
+    const leaving = v !== name && !$(`view-${v}`).hidden;
+    if (leaving && v === 'play') cg.setAutoShapes([]);
+    if (leaving && v === 'review') reviewHidden();
+    if (leaving && v === 'learn') learnHidden();
+    $(`view-${v}`).hidden = v !== name;
+  }
+  document.querySelectorAll('.tab').forEach((t) => {
+    const on = t.dataset.view === name;
+    t.classList.toggle('active', on);
+    if (on) t.setAttribute('aria-current', 'page');
+    else t.removeAttribute('aria-current');
+  });
+  if (location.hash.slice(1) !== name) {
+    try {
+      history.replaceState(null, '', `#${name}`);
+    } catch {
+      /* some embedded viewers disallow it */
+    }
+  }
+  if (name === 'play') refresh(cg);
+  else if (name === 'review') reviewShown();
+  else if (name === 'learn' && !keepSub) (already ? learnHome() : learnShown());
+  else if (name === 'progress') renderProgress();
 }
 
 // ---------------------------------------------------------------- coach actions
@@ -912,6 +1014,7 @@ function openSettings() {
   $('fixedEloOut').textContent = st.fixedElo;
   f.warnings.value = st.warnings;
   f.evalBar.checked = st.evalBar;
+  f.explainOpponent.checked = st.explainOpponent !== false;
   $('dlg-settings').showModal();
 }
 
@@ -924,6 +1027,7 @@ function saveSettings() {
   st.fixedElo = Number(f.fixedElo.value);
   st.warnings = f.warnings.value;
   st.evalBar = f.evalBar.checked;
+  st.explainOpponent = f.explainOpponent.checked;
   Store.save(S.profile);
   applyDisplaySettings();
   S.botElo = computeBotElo();
@@ -931,13 +1035,18 @@ function saveSettings() {
   renderRating();
 }
 
-function openProgress() {
+function renderProgress() {
   const games = S.profile.games;
   const o = S.overall;
   const body = $('progress-body');
+  const doneLessons = LESSONS.filter((l) => S.profile.lessons?.[l.id]?.done).length;
+  const storage = Store.status.cloud
+    ? 'Saved privately to your Claude account — it follows you between devices.'
+    : 'Saved in this browser.';
   if (!games.length) {
-    body.innerHTML = `<h2>Your progress</h2><p class="muted">Finish a game (3+ moves) and your rating history, accuracy and the things to work on will show up here.</p>${howItWorks()}`;
-    $('dlg-progress').showModal();
+    body.innerHTML = `<h1 class="page-title">Your progress</h1>
+      <p class="muted">Finish a game (3+ moves) or import one, and your rating history, accuracy and the things to work on will show up here.</p>
+      <p class="muted small">${esc(storage)} Lessons completed: ${doneLessons} of ${LESSONS.length}.</p>${howItWorks()}`;
     return;
   }
   const wins = games.filter((g) => g.score === 1).length;
@@ -946,35 +1055,51 @@ function openProgress() {
   const history = games.map((_, i) => R.overallFromGames(games.slice(0, i + 1)));
   const tagTotals = {};
   for (const g of games.slice(-15)) for (const [t, c] of Object.entries(g.tags || {})) tagTotals[t] = (tagTotals[t] || 0) + c;
-  const weak = Object.entries(tagTotals)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([t, c]) => `<li><b>${esc(Coach.LESSONS[t]?.title || t)}</b> (${c}× recently)<br><span class="muted">${esc(Coach.LESSONS[t]?.tip || '')}</span></li>`)
+  const weakTags = Object.entries(tagTotals).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const weak = weakTags
+    .map(([t, c]) => {
+      const l = lessonsForTags({ [t]: 1 })[0];
+      return `<li><b>${esc(Coach.LESSONS[t]?.title || t)}</b> (${c}× recently)<br><span class="muted">${esc(Coach.LESSONS[t]?.tip || '')}</span>${
+        l ? `<br><button type="button" class="btn small" data-lesson="${esc(l.id)}">Lesson: ${esc(l.title)} →</button>` : ''
+      }</li>`;
+    })
     .join('');
+  const archived = new Set(Store.games().map((g) => g.id));
   const rows = games
     .slice(-12)
     .reverse()
     .map(
-      (g) => `<tr><td>${new Date(g.date).toLocaleDateString()}</td><td>${g.color === 'w' ? 'White' : 'Black'}</td><td>${
+      (g) => `<tr><td>${new Date(g.date).toLocaleDateString()}</td><td>${g.source === 'import' ? 'Imported' : `vs ${g.botElo}`}</td><td>${g.color === 'w' ? 'White' : 'Black'}</td><td>${
         g.score === 1 ? 'Win' : g.score === 0 ? 'Loss' : g.score === 0.5 ? 'Draw' : 'Unfinished'
-      }</td><td>${g.perf ?? '—'}</td><td>${g.acc != null ? g.acc + '%' : '—'}</td><td>${g.botElo}</td></tr>`,
+      }</td><td>${g.perf ?? '—'}</td><td>${g.acc != null ? g.acc + '%' : '—'}</td><td>${
+        g.id && archived.has(g.id) ? `<button type="button" class="btn small" data-review="${esc(g.id)}">Review</button>` : ''
+      }</td></tr>`,
     )
     .join('');
   body.innerHTML = `
-    <h2>Your progress</h2>
+    <h1 class="page-title">Your progress</h1>
     <div class="stats">
       <div class="stat"><b>≈ ${o.mean}</b><span>Rating (likely ${o.lo}–${o.hi})</span></div>
       <div class="stat"><b>${games.length}</b><span>Games · ${wins}W ${losses}L ${draws}D</span></div>
-      <div class="stat"><b>${R.tierInfo(S.tier).name}</b><span>Coach mode</span></div>
+      <div class="stat"><b>${doneLessons}/${LESSONS.length}</b><span>Lessons done · ${esc(R.tierInfo(S.tier).name)}</span></div>
     </div>
-    ${chartSvg(games, history)}
-    <div class="legend"><span><i></i>Overall rating</span><span><i class="dot-l"></i>Level in each game</span></div>
-    <h3>What to work on</h3>
+    <div class="card chart-card">${chartSvg(games, history)}
+    <div class="legend"><span><i></i>Overall rating</span><span><i class="dot-l"></i>Level in each game</span></div></div>
+    <h2 class="section-head">What to work on</h2>
     ${weak ? `<ol class="weak-list">${weak}</ol>` : '<p class="muted">No repeated mistakes recently — nice.</p>'}
-    <h3>Recent games</h3>
-    <table class="games"><thead><tr><th>Date</th><th>Side</th><th>Result</th><th>Level</th><th>Accuracy</th><th>Opponent</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><button type="button" class="btn" id="pg-mistakes">Practise positions from your mistakes</button></p>
+    <h2 class="section-head">Recent games</h2>
+    <div class="table-wrap"><table class="games"><thead><tr><th>Date</th><th>Opponent</th><th>Side</th><th>Result</th><th>Level</th><th>Accuracy</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="muted small">${esc(storage)}</p>
     ${howItWorks()}`;
-  $('dlg-progress').showModal();
+  body.querySelectorAll('[data-lesson]').forEach((b) => b.addEventListener('click', () => openLesson(b.dataset.lesson)));
+  body.querySelectorAll('[data-review]').forEach((b) =>
+    b.addEventListener('click', () => {
+      showView('review');
+      openReview(b.dataset.review);
+    }),
+  );
+  $('pg-mistakes').addEventListener('click', () => openMistakes());
 }
 
 function chartSvg(games, history) {
@@ -1002,11 +1127,11 @@ function chartSvg(games, history) {
 }
 
 function howItWorks() {
-  return `<h3>How your rating is calculated</h3>
+  return `<h2 class="section-head">How your rating is calculated</h2>
   <p class="muted small">After every move, Stockfish works out how much worse your move was than the best move (the “centipawn loss”). Stronger players lose fewer centipawns on average. Your estimate uses a common rule of thumb — rating ≈ 3100 × e<sup>−ACPL/100</sup> — inside a statistical model that also gives a likely range. A single game is noisy, so the range is wide at first and narrows as you play more. Recent games count more, so the number follows you as you improve. Moves made with a hint, right after a takeback, or after a specific coach warning don’t count. Treat it as a guide to your level (roughly comparable to online rapid ratings), not an official rating.</p>`;
 }
 
 // Exposed for debugging and automated tests.
-window.__chessCoach = { state: S, engine, board: () => cg };
+window.__chessCoach = { state: S, engine, board: () => cg, store: Store };
 
 init();

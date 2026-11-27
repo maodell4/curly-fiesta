@@ -437,6 +437,30 @@ export function preMoveTips({ chess, a0, tier, warnings = 'auto', prevMove, play
   return tips.slice(0, 2);
 }
 
+// Short principles from the classic teaching books, rotated by game phase.
+export const TIPS = {
+  opening: [
+    'Develop knights before bishops — you usually know where knights belong first.',
+    'Try not to move the same piece twice in the opening unless it wins something.',
+    'Castle early, then bring your rooks to the centre files.',
+    'Don’t grab pawns if it costs you development — time matters in the opening.',
+  ],
+  middlegame: [
+    'No tactic in sight? Improve your worst-placed piece.',
+    'Rooks belong on open files — files without pawns.',
+    'Knights love outposts: squares near the enemy that no enemy pawn can attack.',
+    'Before attacking, make sure your own king is safe.',
+    'When you’re ahead in material, trade pieces (not pawns) to make your extra material count.',
+    'Ask what your opponent wants to do next — then stop it if it’s dangerous.',
+  ],
+  endgame: [
+    'In the endgame your king is a fighter — bring it toward the centre.',
+    'Passed pawns must be pushed — and rooks belong behind passed pawns.',
+    'When ahead, trade pieces; when behind, trade pawns.',
+    'With king and pawn against king, put your king in front of the pawn.',
+  ],
+};
+
 function generalTip(chess, prevMove, count) {
   const me = chess.turn();
   const phase = gamePhase(chess);
@@ -455,10 +479,42 @@ function generalTip(chess, prevMove, count) {
     if (undeveloped >= 2 && count % 2 === 1)
       return 'Develop your knights and bishops toward the centre — every piece should join the game.';
   }
-  if (phase === 'endgame' && count % 4 === 0)
-    return 'In the endgame your king is a fighter — bring it toward the centre. Passed pawns should be pushed!';
   if (count % 3 === 2) return 'Before you move: look for Checks, Captures and Threats — for you and for your opponent.';
+  if (count % 3 === 0 && count > 0) {
+    const list = TIPS[phase];
+    return list[Math.floor(count / 3) % list.length];
+  }
   return null;
+}
+
+/**
+ * What the opponent's move does, from the player's side of the board:
+ * {text, threat} where threat is true if it attacks something of yours.
+ */
+export function explainOpponentMove(move) {
+  const me = other(move.color);
+  const before = new Chess(move.before);
+  const after = new Chess(move.after);
+  const parts = [];
+  let threat = false;
+  if (after.isCheck()) {
+    parts.push('gives check — you must deal with it');
+    threat = true;
+  }
+  if (move.captured) parts.push(`takes your ${pieceWord(move.captured)}`);
+  const was = new Set(hangingPieces(before, me).map((h) => h.square));
+  const fresh = hangingPieces(after, me).filter((h) => !was.has(h.square));
+  if (fresh.length) {
+    parts.push(`attacks your ${pieceWord(fresh[0].type)} on ${fresh[0].square}`);
+    threat = true;
+  }
+  if (!parts.length) {
+    const idea = moveIdea(move.before, moveToUci(move));
+    if (idea && !['capture', 'trade'].includes(idea.tag)) parts.push(idea.text.replace(/\byour\b/g, 'their'));
+  }
+  if (!parts.length) return null;
+  const what = parts.join(' and ');
+  return { text: `${move.san} ${what}.`, what, san: move.san, threat };
 }
 
 /** Escalating hints: 1 = idea, 2 = which piece, 3 = the move. */
