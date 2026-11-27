@@ -96,7 +96,7 @@ function welcome() {
       title: 'Hi! I’m your chess coach.',
       body:
         'Here’s how this works: before your move I’ll point out dangers and chances, after every move I’ll tell you how good it was and why, and I’ll keep an estimate of the level you’re playing at. Your opponent adjusts to you. ' +
-        'Stuck? Press 💡 Hint — each press gives a bigger clue.',
+        'Stuck? Press Hint — each press gives a bigger clue.',
     });
   } else {
     addMsg({
@@ -108,8 +108,8 @@ function welcome() {
 }
 
 function bindUI() {
-  $('btn-new').addEventListener('click', () => {
-    if (inProgress() && !confirm('Start a new game? This one will be saved as unfinished.')) return;
+  $('btn-new').addEventListener('click', async () => {
+    if (inProgress() && !(await askConfirm('Start a new game?', 'This game will be saved as unfinished.', 'New game'))) return;
     newGame();
   });
   $('btn-hint').addEventListener('click', onHint);
@@ -118,9 +118,9 @@ function bindUI() {
     cg.toggleOrientation();
     $('evalbar').classList.toggle('flipped', cg.state.orientation === 'black');
   });
-  $('btn-resign').addEventListener('click', () => {
+  $('btn-resign').addEventListener('click', async () => {
     if (!inProgress()) return;
-    if (confirm('Resign this game?')) endGame('resign');
+    if (await askConfirm('Resign this game?', 'It will count as a loss. Your moves so far still count toward your rating.', 'Resign')) endGame('resign');
   });
   $('btn-settings').addEventListener('click', openSettings);
   $('btn-progress').addEventListener('click', openProgress);
@@ -145,8 +145,8 @@ function bindUI() {
   });
   const range = $('fixedElo');
   range.addEventListener('input', () => ($('fixedEloOut').textContent = range.value));
-  $('btn-reset').addEventListener('click', () => {
-    if (!confirm('Erase all saved games and your rating history?')) return;
+  $('btn-reset').addEventListener('click', async () => {
+    if (!(await askConfirm('Reset all progress?', 'This erases your saved games and rating history in this browser.', 'Erase everything'))) return;
     S.profile = Store.reset();
     $('dlg-settings').close();
     S.overall = R.overallFromGames([]);
@@ -245,7 +245,7 @@ async function startPlayerTurn() {
   });
   const shapes = [];
   for (const tip of tips) {
-    addMsg({ kind: tip.kind, title: tipTitle(tip.kind), body: tip.text });
+    addMsg({ kind: tip.kind, kicker: tipTitle(tip.kind), body: tip.text });
     if (tip.specific) S.assisted = true;
     for (const a of tip.arrows || []) shapes.push(a);
     for (const sq of tip.squares || []) shapes.push({ orig: sq, brush: tip.kind === 'danger' ? 'red' : 'green' });
@@ -254,7 +254,7 @@ async function startPlayerTurn() {
 }
 
 function tipTitle(kind) {
-  return { danger: '⚠️ Careful', chance: '✨ Opportunity', tip: '💬 Coach tip' }[kind] || '';
+  return { danger: 'Careful', chance: 'Opportunity', tip: 'Coach tip' }[kind] || '';
 }
 
 async function onUserMove(orig, dest) {
@@ -428,7 +428,8 @@ function adapt() {
     const info = R.tierInfo(t);
     addMsg({
       kind: 'info',
-      title: t > S.tier ? '📈 You’re playing well!' : '🧭 Let’s slow down a little',
+      kicker: 'Coach mode',
+      title: t > S.tier ? 'You’re playing well!' : 'Let’s slow down a little',
       body: `Coach mode is now “${info.name}”: ${info.blurb}`,
     });
     S.tier = t;
@@ -570,7 +571,7 @@ function onHint() {
   engine.analyze(fen).then((a0) => {
     if (gid !== S.gid || S.chess.fen() !== fen) return;
     const h = Coach.hintFor(level, { chess: S.chess, a0 });
-    addMsg({ kind: 'chance', title: `💡 Hint ${level}/3`, body: h.text, note: level >= 2 ? 'This move will be marked as assisted (not rated).' : null });
+    addMsg({ kind: 'chance', kicker: `Hint ${level} of 3`, body: h.text.replace(/^Hint: /, ''), note: level >= 2 ? 'This move will be marked as assisted (not rated).' : null });
     const shapes = [...(h.arrows || []), ...(h.squares || []).map((sq) => ({ orig: sq, brush: 'green' }))];
     if (shapes.length) cg.setAutoShapes(shapes);
   });
@@ -748,7 +749,7 @@ function showFeedback(rec) {
   let html = `<div class="meta">${meta.join('')}</div><div class="title">${esc(ex.headline)}</div>`;
   if (ex.text) html += `<p>${esc(ex.text)}</p>`;
   if (ex.better) html += `<p class="better">${esc(ex.better)}</p>`;
-  if (ex.lesson) html += `<p class="lesson">💡 ${esc(ex.lesson)}</p>`;
+  if (ex.lesson) html += `<p class="lesson"><span class="kicker">Remember</span>${esc(ex.lesson)}</p>`;
   if (rec.assisted) html += `<p class="note">Assisted move — not counted toward your rating.</p>`;
   else if (rec.excluded && !rec.forced) html += `<p class="note">The game is already decided here, so this move isn’t rated.</p>`;
   addMsg({ kind: `move cls-${rec.cls}`, html });
@@ -759,12 +760,13 @@ function moveLabel(rec) {
   return `${fullmove}${rec.move.color === 'w' ? '.' : '...'}${rec.move.san}`;
 }
 
-function addMsg({ kind, title, body, html, note, actions }) {
+function addMsg({ kind, kicker, title, body, html, note, actions }) {
   const feed = $('feed');
   const el = document.createElement('div');
   el.className = `msg ${kind}`;
   if (html) el.innerHTML = html;
   else {
+    if (kicker) el.insertAdjacentHTML('beforeend', `<div class="kicker">${esc(kicker)}</div>`);
     if (title) el.insertAdjacentHTML('beforeend', `<div class="title">${esc(title)}</div>`);
     if (body) el.insertAdjacentHTML('beforeend', `<p>${esc(body)}</p>`);
     if (note) el.insertAdjacentHTML('beforeend', `<p class="note">${esc(note)}</p>`);
@@ -802,7 +804,7 @@ function updateOpening() {
   const op = sans.length ? detectOpening(sans) : null;
   const generic = op && (op.moves.length < 2 || /Pawn (Opening|Game)$|^Indian Defense$/.test(op.name));
   if (op && !generic && op.name !== S.opening?.name && sans.length <= 14) {
-    addMsg({ kind: 'tip', title: `📖 ${op.name}`, body: op.idea });
+    addMsg({ kind: 'tip', kicker: 'Opening', title: op.name, body: op.idea });
   }
   if (op || sans.length === 0) S.opening = op;
   $('opening').textContent = S.opening ? S.opening.name : '';
@@ -850,6 +852,22 @@ function stepView(delta) {
 }
 
 // ---------------------------------------------------------------- dialogs
+
+/** In-page replacement for confirm(), which embedded viewers block. */
+function askConfirm(title, text, okLabel) {
+  const dlg = $('dlg-confirm');
+  $('confirm-title').textContent = title;
+  $('confirm-text').textContent = text;
+  $('confirm-ok').textContent = okLabel;
+  return new Promise((resolve) => {
+    dlg.onclose = () => {
+      dlg.onclose = null;
+      resolve(dlg.returnValue === 'ok');
+    };
+    dlg.returnValue = '';
+    dlg.showModal();
+  });
+}
 
 function showGameOver(reason, score, change) {
   const title = score === 1 ? '🎉 You won!' : score === 0 ? 'You lost — but you learned something' : 'Draw';

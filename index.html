@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chess Coach</title>
   <meta name="description" content="A live chess coach for beginners: adaptive opponent, move-by-move feedback and a rating estimate after every move.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap">
   <link rel="stylesheet" href="vendor/chessground/chessground.base.css">
   <link rel="stylesheet" href="vendor/chessground/chessground.brown.css">
   <link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css">
@@ -46,7 +49,7 @@
       </div>
 
       <div class="controls">
-        <button id="btn-hint" class="btn" type="button" title="Hints get more specific each time you press">💡 Hint</button>
+        <button id="btn-hint" class="btn" type="button" title="Hints get more specific each time you press">Hint</button>
         <button id="btn-undo" class="btn" type="button">↩ Take back</button>
         <button id="btn-flip" class="btn" type="button">⇅ Flip board</button>
         <button id="btn-resign" class="btn ghost-danger" type="button">Resign</button>
@@ -108,6 +111,17 @@
       <button type="button" data-piece="b" class="promo">♝<span>Bishop</span></button>
       <button type="button" data-piece="n" class="promo">♞<span>Knight</span></button>
     </div>
+  </dialog>
+
+  <dialog id="dlg-confirm" class="dialog small-dialog">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text" class="muted"></p>
+      <div class="dialog-actions">
+        <button class="btn" value="cancel" type="submit">Cancel</button>
+        <button id="confirm-ok" class="btn primary" value="ok" type="submit">OK</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="dlg-over" class="dialog">
